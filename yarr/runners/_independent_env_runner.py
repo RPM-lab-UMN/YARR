@@ -189,6 +189,7 @@ class _IndependentEnvRunner(_EnvRunner):
             # evaluate on N tasks * M episodes per task = total eval episodes
             for ep in range(self._eval_episodes):
                 eval_demo_seed = ep + self._eval_from_eps_number
+                variation = ep % 3 # TODO make this a parameter
                 logging.info('%s: Starting episode %d, seed %d.' % (name, ep, eval_demo_seed))
 
                 # the current task gets reset after every M episodes
@@ -197,7 +198,7 @@ class _IndependentEnvRunner(_EnvRunner):
                     self._step_signal, env, self._agent,
                     self._episode_length, self._timesteps,
                     eval, eval_demo_seed=eval_demo_seed,
-                    record_enabled=rec_cfg.enabled)
+                    record_enabled=rec_cfg.enabled, variation=variation)
                 try:
                     for replay_transition in generator:
                         while True:
