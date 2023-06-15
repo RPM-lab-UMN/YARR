@@ -77,7 +77,7 @@ class IndependentEnvRunner(EnvRunner):
               env_config,
               device_idx,
               save_metrics,
-              cinematic_recorder_cfg):
+              cinematic_recorder_cfg, interactive=False):
         multi_task = isinstance(env_config[0], list)
         if multi_task:
             eval_env = CustomMultiTaskRLBenchEnv(
@@ -116,11 +116,21 @@ class IndependentEnvRunner(EnvRunner):
             num_eval_runs=self._num_eval_runs)
 
         stat_accumulator = SimpleAccumulator(eval_video_fps=30)
-        self._internal_env_runner._run_eval_independent('eval_env',
-                                                        stat_accumulator,
-                                                        weight,
-                                                        writer_lock,
-                                                        True,
-                                                        device_idx,
-                                                        save_metrics,
-                                                        cinematic_recorder_cfg)
+        if not interactive:
+            self._internal_env_runner._run_eval_independent('eval_env',
+                                                            stat_accumulator,
+                                                            weight,
+                                                            writer_lock,
+                                                            True,
+                                                            device_idx,
+                                                            save_metrics,
+                                                            cinematic_recorder_cfg)
+        else:
+            self._internal_env_runner._run_eval_interactive('eval_env',
+                                                            stat_accumulator,
+                                                            weight,
+                                                            writer_lock,
+                                                            True,
+                                                            device_idx,
+                                                            save_metrics,
+                                                            cinematic_recorder_cfg)  

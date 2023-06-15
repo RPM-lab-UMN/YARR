@@ -23,7 +23,7 @@ from pyrep.objects.dummy import Dummy
 from pyrep.objects.vision_sensor import VisionSensor
 
 from yarr.runners._env_runner import _EnvRunner
-
+from clip import tokenize
 
 class _IndependentEnvRunner(_EnvRunner):
 
@@ -296,3 +296,170 @@ class _IndependentEnvRunner(_EnvRunner):
 
     def kill(self):
         self._kill_signal.value = True
+
+
+    def _run_eval_interactive(self, name: str,
+                              stats_accumulator,
+                              weight,
+                              writer_lock,
+                              eval=True,
+                              device_idx=0,
+                              save_metrics=True,
+                              cinematic_recorder_cfg=None):
+
+        self._name = name
+        self._save_metrics = save_metrics
+        self._is_test_set = type(weight) == dict
+
+        self._agent = copy.deepcopy(self._agent)
+
+        device = torch.device('cuda:%d' % device_idx) if torch.cuda.device_count() > 1 else torch.device('cuda:0')
+        with writer_lock: # hack to prevent multiple CLIP downloads ... argh should use a separate lock
+            self._agent.build(training=False, device=device)
+
+        logging.info('%s: Launching env.' % name)
+        np.random.seed()
+
+        logging.info('Agent information:')
+        logging.info(self._agent)
+
+        env = self._eval_env
+        env.eval = eval
+        env.launch()
+
+        if not os.path.exists(self._weightsdir):
+            raise Exception('No weights directory found.')
+
+        # one weight for all tasks (used for validation)
+        if type(weight) == int:
+            logging.info('Evaluating weight %s' % weight)
+            weight_path = os.path.join(self._weightsdir, str(weight))
+            seed_path = self._weightsdir.replace('/weights', '')
+            self._agent.load_weights(weight_path)
+            weight_name = str(weight)
+
+        new_transitions = {'train_envs': 0, 'eval_envs': 0}
+        total_transitions = {'train_envs': 0, 'eval_envs': 0}
+        current_task_id = -1
+
+        # reset the task
+        variation = 0
+        eval_demo_seed = 1000 # TODO
+        obs = env.reset_to_seed(variation, eval_demo_seed)
+        # replace the language goal with user input
+        command = input("Enter a command: ")
+        # tokenize the command
+        env._lang_goal = command
+        obs['lang_goal_tokens'] = tokenize([command])[0].numpy()
+        self._agent.reset()
+        timesteps = 1
+        obs_history = {k: [np.array(v, dtype=self._get_type(v))] * timesteps for k, v in obs.items()}
+        prepped_data = {k:torch.tensor([v], device=self._env_device) for k, v in obs_history.items()}
+
+        act_result = self._agent.act(self._step_signal.value, prepped_data,
+                                deterministic=eval)
+        transition = env.step(act_result)
+        pass
+
+
+        #         # the current task gets reset after every M episodes
+        #         episode_rollout = []
+        #         generator = self._rollout_generator.generator(
+        #             self._step_signal, env, self._agent,
+        #             self._episode_length, self._timesteps,
+        #             eval, eval_demo_seed=eval_demo_seed,
+        #             record_enabled=rec_cfg.enabled, variation=variation)
+        #         try:
+        #             for replay_transition in generator:
+        #                 while True:
+        #                     if self._kill_signal.value:
+        #                         env.shutdown()
+        #                         return
+        #                     if (eval or self._target_replay_ratio is None or
+        #                             self._step_signal.value <= 0 or (
+        #                                     self._current_replay_ratio.value >
+        #                                     self._target_replay_ratio)):
+        #                         break
+        #                     time.sleep(1)
+        #                     logging.debug(
+        #                         'Agent. Waiting for replay_ratio %f to be more than %f' %
+        #                         (self._current_replay_ratio.value, self._target_replay_ratio))
+
+        #                 with self.write_lock:
+        #                     if len(self.agent_summaries) == 0:
+        #                         # Only store new summaries if the previous ones
+        #                         # have been popped by the main env runner.
+        #                         for s in self._agent.act_summaries():
+        #                             self.agent_summaries.append(s)
+        #                 episode_rollout.append(replay_transition)
+        #         except StopIteration as e:
+        #             continue
+        #         except Exception as e:
+        #             env.shutdown()
+        #             raise e
+
+        #         with self.write_lock:
+        #             for transition in episode_rollout:
+        #                 self.stored_transitions.append((name, transition, eval))
+
+        #                 new_transitions['eval_envs'] += 1
+        #                 total_transitions['eval_envs'] += 1
+        #                 stats_accumulator.step(transition, eval)
+        #                 current_task_id = transition.info['active_task_id']
+
+        #         self._num_eval_episodes_signal.value += 1
+
+        #         task_name, _ = self._get_task_name()
+        #         reward = episode_rollout[-1].reward
+        #         lang_goal = env._lang_goal
+        #         print(f"Evaluating {task_name} | Episode {ep} | Score: {reward} | Lang Goal: {lang_goal}")
+
+        #         # save recording
+        #         if rec_cfg.enabled:
+        #             success = reward > 0.99
+        #             record_file = os.path.join(seed_path, 'videos',
+        #                                        '%s_w%s_s%s_%s.mp4' % (task_name,
+        #                                                               weight_name,
+        #                                                               eval_demo_seed,
+        #                                                               'succ' if success else 'fail'))
+
+        #             lang_goal = self._eval_env._lang_goal
+
+        #             tr.save(record_file, lang_goal, reward)
+        #             tr._cam_motion.restore_pose()
+
+        #     # report summaries
+        #     summaries = []
+        #     summaries.extend(stats_accumulator.pop())
+
+        #     eval_task_name, multi_task = self._get_task_name()
+
+        #     if eval_task_name and multi_task:
+        #         for s in summaries:
+        #             if 'eval' in s.name:
+        #                 s.name = '%s/%s' % (s.name, eval_task_name)
+
+        #     if len(summaries) > 0:
+        #         if multi_task:
+        #             task_score = [s.value for s in summaries if f'eval_envs/return/{eval_task_name}' in s.name][0]
+        #         else:
+        #             task_score = [s.value for s in summaries if f'eval_envs/return' in s.name][0]
+        #     else:
+        #         task_score = "unknown"
+
+        #     print(f"Finished {eval_task_name} | Final Score: {task_score}\n")
+
+        #     if self._save_metrics:
+        #         with writer_lock:
+        #             writer.add_summaries(weight_name, summaries)
+
+        #     self._new_transitions = {'train_envs': 0, 'eval_envs': 0}
+        #     self.agent_summaries[:] = []
+        #     self.stored_transitions[:] = []
+
+        # if self._save_metrics:
+        #     with writer_lock:
+        #         writer.end_iteration()
+
+        # logging.info('Finished evaluation.')
+        # env.shutdown()
