@@ -13,7 +13,7 @@ from yarr.agents.agent import Summary
 from helpers.custom_rlbench_env import CustomRLBenchEnv, CustomMultiTaskRLBenchEnv
 
 from yarr.runners.env_runner import EnvRunner
-
+import logging
 
 class IndependentEnvRunner(EnvRunner):
 
@@ -37,7 +37,11 @@ class IndependentEnvRunner(EnvRunner):
                  max_fails: int = 10,
                  num_eval_runs: int = 1,
                  env_device: torch.device = None,
-                 multi_task: bool = False):
+                 multi_task: bool = False,
+                 classifier = None,
+                 l2a = None):
+            self._classifier = classifier
+            self._l2a = l2a
             super().__init__(train_env, agent, train_replay_buffer, num_train_envs, num_eval_envs,
                             rollout_episodes, eval_episodes, training_iterations, eval_from_eps_number,
                             episode_length, eval_env, eval_replay_buffer, stat_accumulator,
@@ -126,11 +130,77 @@ class IndependentEnvRunner(EnvRunner):
                                                             save_metrics,
                                                             cinematic_recorder_cfg)
         else:
-            self._internal_env_runner._run_eval_interactive('eval_env',
-                                                            stat_accumulator,
-                                                            weight,
-                                                            writer_lock,
-                                                            True,
-                                                            device_idx,
-                                                            save_metrics,
-                                                            cinematic_recorder_cfg)  
+            self._run_eval_interactive('eval_env',
+                                        weight,
+                                        True,
+                                        device_idx)
+            
+    def _run_eval_interactive(self, name: str,
+                              weight,
+                              eval=True,
+                              device_idx=0):
+
+        self._name = name
+        self._is_test_set = type(weight) == dict
+
+        device = torch.device('cuda:%d' % device_idx) if torch.cuda.device_count() > 1 else torch.device('cuda:0')
+        self._agent.build(training=False, device=device)
+
+        logging.info('%s: Launching env.' % name)
+        np.random.seed()
+
+        logging.info('Agent information:')
+        logging.info(self._agent)
+
+        env = self._eval_env
+        env.eval = eval
+        env.launch()
+
+        if not os.path.exists(self._weightsdir):
+            raise Exception('No weights directory found.')
+
+        # one weight for all tasks (used for validation)
+        if type(weight) == int:
+            logging.info('Evaluating weight %s' % weight)
+            weight_path = os.path.join(self._weightsdir, str(weight))
+            seed_path = self._weightsdir.replace('/weights', '')
+            self._agent.load_weights(weight_path)
+            weight_name = str(weight)
+
+        new_transitions = {'train_envs': 0, 'eval_envs': 0}
+        total_transitions = {'train_envs': 0, 'eval_envs': 0}
+        current_task_id = -1
+
+        # reset the task
+        variation = 0
+        eval_demo_seed = 1000 # TODO
+        obs = env.reset_to_seed(variation, eval_demo_seed)
+        # replace the language goal with user input
+        command = ''
+        while command != 'quit':
+            command = input("Enter a command: ")
+            if command == 'reset':
+                eval_demo_seed += 1
+                obs = env.reset_to_seed(variation, eval_demo_seed)
+                continue
+            # tokenize the command
+            env._lang_goal = command
+            tokens = tokenize([command])[0].numpy()
+            # send the tokens to the classifier
+            command_class = self._classifier.predict(tokens)
+            # if command class is 1, use voxel transformer
+            if command_class == 1:
+                obs['lang_goal_tokens'] = tokens
+                self._agent.reset()
+                timesteps = 1
+                obs_history = {k: [np.array(v, dtype=self._get_type(v))] * timesteps for k, v in obs.items()}
+                prepped_data = {k:torch.tensor([v], device=self._env_device) for k, v in obs_history.items()}
+
+                act_result = self._agent.act(self._step_signal.value, prepped_data,
+                                        deterministic=eval)
+                transition = env.step(act_result)
+            else:
+                
+            # double step updates rendered views?
+            transition = env.step(act_result)
+            obs = dict(transition.observation)
