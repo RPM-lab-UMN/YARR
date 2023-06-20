@@ -148,8 +148,8 @@ class RLBenchEnv(Env):
     def shutdown(self):
         self._rlbench_env.shutdown()
 
-    def reset(self, seed=None) -> dict:
-        descriptions, obs = self._task.reset(seed)
+    def reset(self, seed=None, interactive=False) -> dict:
+        descriptions, obs = self._task.reset(seed, interactive)
         self._lang_goal = descriptions[0] # first description variant
         extracted_obs = self.extract_obs(obs)
         return extracted_obs

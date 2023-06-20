@@ -14,6 +14,8 @@ from helpers.custom_rlbench_env import CustomRLBenchEnv, CustomMultiTaskRLBenchE
 
 from yarr.runners.env_runner import EnvRunner
 import logging
+import os
+from clip import tokenize
 
 class IndependentEnvRunner(EnvRunner):
 
@@ -38,10 +40,8 @@ class IndependentEnvRunner(EnvRunner):
                  num_eval_runs: int = 1,
                  env_device: torch.device = None,
                  multi_task: bool = False,
-                 classifier = None,
-                 l2a = None):
+                 classifier = None):
             self._classifier = classifier
-            self._l2a = l2a
             super().__init__(train_env, agent, train_replay_buffer, num_train_envs, num_eval_envs,
                             rollout_episodes, eval_episodes, training_iterations, eval_from_eps_number,
                             episode_length, eval_env, eval_replay_buffer, stat_accumulator,
@@ -130,10 +130,16 @@ class IndependentEnvRunner(EnvRunner):
                                                             save_metrics,
                                                             cinematic_recorder_cfg)
         else:
+            self._eval_env = eval_env
             self._run_eval_interactive('eval_env',
                                         weight,
                                         True,
                                         device_idx)
+            
+    def _get_type(self, x):
+        if x.dtype == np.float64:
+            return np.float32
+        return x.dtype
             
     def _run_eval_interactive(self, name: str,
                               weight,
@@ -174,23 +180,27 @@ class IndependentEnvRunner(EnvRunner):
         # reset the task
         variation = 0
         eval_demo_seed = 1000 # TODO
-        obs = env.reset_to_seed(variation, eval_demo_seed)
+        obs = env.reset_to_seed(variation, eval_demo_seed, interactive=True)
+        prev_action = torch.zeros((1, 5)).to(self._env_device)
+        prev_action[0, -1] = 1
         # replace the language goal with user input
         command = ''
         while command != 'quit':
             command = input("Enter a command: ")
             if command == 'reset':
                 eval_demo_seed += 1
-                obs = env.reset_to_seed(variation, eval_demo_seed)
+                obs = env.reset_to_seed(variation, eval_demo_seed, interactive=True)
+                prev_action = torch.zeros((1, 5)).to(self._env_device)
+                prev_action[0, -1] = 1
                 continue
             # tokenize the command
             env._lang_goal = command
-            tokens = tokenize([command])[0].numpy()
+            tokens = tokenize([command]).numpy()
             # send the tokens to the classifier
             command_class = self._classifier.predict(tokens)
             # if command class is 1, use voxel transformer
             if command_class == 1:
-                obs['lang_goal_tokens'] = tokens
+                obs['lang_goal_tokens'] = tokens[0]
                 self._agent.reset()
                 timesteps = 1
                 obs_history = {k: [np.array(v, dtype=self._get_type(v))] * timesteps for k, v in obs.items()}
@@ -200,7 +210,9 @@ class IndependentEnvRunner(EnvRunner):
                                         deterministic=eval)
                 transition = env.step(act_result)
             else:
-                
-            # double step updates rendered views?
-            transition = env.step(act_result)
+                # use l2a model
+                text_embed = self._classifier.sentence_emb
+                action, prev_action = self._classifier.l2a.get_action(prev_action, text_embed, obs)
+                transition = env.step(action=action)
+            env.env._scene.step()
             obs = dict(transition.observation)
