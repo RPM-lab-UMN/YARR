@@ -230,13 +230,13 @@ class MultiTaskRLBenchEnv(MultiTaskEnv):
     def shutdown(self):
         self._rlbench_env.shutdown()
 
-    def reset(self) -> dict:
+    def reset(self, seed=None, interactive=False) -> dict:
         if self._episodes_this_task == self._swap_task_every:
             self._set_new_task()
             self._episodes_this_task = 0
         self._episodes_this_task += 1
 
-        descriptions, obs = self._task.reset()
+        descriptions, obs = self._task.reset(seed, interactive)
         self._lang_goal = descriptions[0] # first description variant
         extracted_obs = self.extract_obs(obs)
 

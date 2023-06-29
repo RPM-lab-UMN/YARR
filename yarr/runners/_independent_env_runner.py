@@ -191,7 +191,8 @@ class _IndependentEnvRunner(_EnvRunner):
             # evaluate on N tasks * M episodes per task = total eval episodes
             for ep in range(self._eval_episodes):
                 eval_demo_seed = ep + self._eval_from_eps_number
-                variation = ep % 2 # TODO make this a parameter
+                num_variations = env._task.variation_count()
+                variation = ep % num_variations
                 logging.info('%s: Starting episode %d, seed %d.' % (name, ep, eval_demo_seed))
 
                 # the current task gets reset after every M episodes
