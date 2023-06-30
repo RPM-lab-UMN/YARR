@@ -120,99 +120,13 @@ class IndependentEnvRunner(EnvRunner):
             num_eval_runs=self._num_eval_runs)
 
         stat_accumulator = SimpleAccumulator(eval_video_fps=30)
-        if not interactive:
-            self._internal_env_runner._run_eval_independent('eval_env',
-                                                            stat_accumulator,
-                                                            weight,
-                                                            writer_lock,
-                                                            True,
-                                                            device_idx,
-                                                            save_metrics,
-                                                            cinematic_recorder_cfg)
-        else:
-            self._eval_env = eval_env
-            self._run_eval_interactive('eval_env',
-                                        weight,
-                                        True,
-                                        device_idx)
-            
-    def _get_type(self, x):
-        if x.dtype == np.float64:
-            return np.float32
-        return x.dtype
-            
-    def _run_eval_interactive(self, name: str,
-                              weight,
-                              eval=True,
-                              device_idx=0):
+        self._internal_env_runner._run_eval_independent('eval_env',
+                                                        stat_accumulator,
+                                                        weight,
+                                                        writer_lock,
+                                                        True,
+                                                        device_idx,
+                                                        save_metrics,
+                                                        cinematic_recorder_cfg)
 
-        self._name = name
-        self._is_test_set = type(weight) == dict
 
-        device = torch.device('cuda:%d' % device_idx) if torch.cuda.device_count() > 1 else torch.device('cuda:0')
-        self._agent.build(training=False, device=device)
-
-        logging.info('%s: Launching env.' % name)
-        np.random.seed()
-
-        logging.info('Agent information:')
-        logging.info(self._agent)
-
-        env = self._eval_env
-        env.eval = eval
-        env.launch()
-
-        if not os.path.exists(self._weightsdir):
-            raise Exception('No weights directory found.')
-
-        # one weight for all tasks (used for validation)
-        if type(weight) == int:
-            logging.info('Evaluating weight %s' % weight)
-            weight_path = os.path.join(self._weightsdir, str(weight))
-            seed_path = self._weightsdir.replace('/weights', '')
-            self._agent.load_weights(weight_path)
-            weight_name = str(weight)
-
-        new_transitions = {'train_envs': 0, 'eval_envs': 0}
-        total_transitions = {'train_envs': 0, 'eval_envs': 0}
-        current_task_id = -1
-
-        # reset the task
-        variation = 0
-        eval_demo_seed = 1000 # TODO
-        obs = env.reset_to_seed(variation, eval_demo_seed, interactive=True)
-        prev_action = torch.zeros((1, 5)).to(self._env_device)
-        prev_action[0, -1] = 1
-        # replace the language goal with user input
-        command = ''
-        while command != 'quit':
-            command = input("Enter a command: ")
-            if command == 'reset':
-                eval_demo_seed += 1
-                obs = env.reset_to_seed(variation, eval_demo_seed, interactive=True)
-                prev_action = torch.zeros((1, 5)).to(self._env_device)
-                prev_action[0, -1] = 1
-                continue
-            # tokenize the command
-            env._lang_goal = command
-            tokens = tokenize([command]).numpy()
-            # send the tokens to the classifier
-            command_class = self._classifier.predict(tokens)
-            # if command class is 1, use voxel transformer
-            if command_class == 1:
-                obs['lang_goal_tokens'] = tokens[0]
-                self._agent.reset()
-                timesteps = 1
-                obs_history = {k: [np.array(v, dtype=self._get_type(v))] * timesteps for k, v in obs.items()}
-                prepped_data = {k:torch.tensor([v], device=self._env_device) for k, v in obs_history.items()}
-
-                act_result = self._agent.act(self._step_signal.value, prepped_data,
-                                        deterministic=eval)
-                transition = env.step(act_result)
-            else:
-                # use l2a model
-                text_embed = self._classifier.sentence_emb
-                action, prev_action = self._classifier.l2a.get_action(prev_action, text_embed, obs)
-                transition = env.step(action=action)
-            env.env._scene.step()
-            obs = dict(transition.observation)
