@@ -207,36 +207,38 @@ class _IndependentEnvRunner(_EnvRunner):
                             record_enabled=rec_cfg.enabled, variation=variation)
                     except Exception as e:
                         seed_offset += 1
+                        continue
+                    try:
+                        for replay_transition in generator:
+                            while True:
+                                if self._kill_signal.value:
+                                    env.shutdown()
+                                    return
+                                if (eval or self._target_replay_ratio is None or
+                                        self._step_signal.value <= 0 or (
+                                                self._current_replay_ratio.value >
+                                                self._target_replay_ratio)):
+                                    break
+                                time.sleep(1)
+                                logging.debug(
+                                    'Agent. Waiting for replay_ratio %f to be more than %f' %
+                                    (self._current_replay_ratio.value, self._target_replay_ratio))
+
+                            with self.write_lock:
+                                if len(self.agent_summaries) == 0:
+                                    # Only store new summaries if the previous ones
+                                    # have been popped by the main env runner.
+                                    for s in self._agent.act_summaries():
+                                        self.agent_summaries.append(s)
+                            episode_rollout.append(replay_transition)
+                    except StopIteration as e:
+                        continue
+                    except Exception as e:
+                        print('transition failed')
+                        env._episodes_this_task -= 1
+                        seed_offset += 1
                     else:
                         break
-                try:
-                    for replay_transition in generator:
-                        while True:
-                            if self._kill_signal.value:
-                                env.shutdown()
-                                return
-                            if (eval or self._target_replay_ratio is None or
-                                    self._step_signal.value <= 0 or (
-                                            self._current_replay_ratio.value >
-                                            self._target_replay_ratio)):
-                                break
-                            time.sleep(1)
-                            logging.debug(
-                                'Agent. Waiting for replay_ratio %f to be more than %f' %
-                                (self._current_replay_ratio.value, self._target_replay_ratio))
-
-                        with self.write_lock:
-                            if len(self.agent_summaries) == 0:
-                                # Only store new summaries if the previous ones
-                                # have been popped by the main env runner.
-                                for s in self._agent.act_summaries():
-                                    self.agent_summaries.append(s)
-                        episode_rollout.append(replay_transition)
-                except StopIteration as e:
-                    continue
-                except Exception as e:
-                    env.shutdown()
-                    raise e
 
                 with self.write_lock:
                     for transition in episode_rollout:
