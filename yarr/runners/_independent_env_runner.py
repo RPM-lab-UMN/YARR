@@ -235,7 +235,10 @@ class _IndependentEnvRunner(_EnvRunner):
                         continue
                     except Exception as e:
                         print('transition failed')
-                        env._episodes_this_task -= 1
+                        try:
+                            env._episodes_this_task -= 1
+                        except:
+                            pass
                         seed_offset += 1
                     else:
                         break

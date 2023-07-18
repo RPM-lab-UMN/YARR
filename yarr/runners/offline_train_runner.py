@@ -23,7 +23,7 @@ from yarr.runners.train_runner import TrainRunner
 from yarr.utils.log_writer import LogWriter
 from yarr.utils.stat_accumulator import StatAccumulator
 from yarr.replay_buffer.prioritized_replay_buffer import PrioritizedReplayBuffer
-
+from statistics import mean
 
 class OfflineTrainRunner():
 
@@ -43,7 +43,8 @@ class OfflineTrainRunner():
                  csv_logging: bool = False,
                  load_existing_weights: bool = True,
                  rank: int = None,
-                 world_size: int = None):
+                 world_size: int = None,
+                 start_weight: str = None):
         self._agent = agent
         self._wrapped_buffer = wrapped_replay_buffer
         self._stat_accumulator = stat_accumulator
@@ -62,6 +63,7 @@ class OfflineTrainRunner():
         self._load_existing_weights = load_existing_weights
         self._rank = rank
         self._world_size = world_size
+        self.start_weight = start_weight
 
         self._writer = None
         if logdir is None:
@@ -110,7 +112,7 @@ class OfflineTrainRunner():
         if self._weightsdir is not None:
             existing_weights = sorted([int(f) for f in os.listdir(self._weightsdir)])
             if (not self._load_existing_weights) or len(existing_weights) == 0:
-                self._save_model(0)
+                # self._save_model(0)
                 start_iter = 0
             else:
                 resume_iteration = existing_weights[-1]
@@ -119,12 +121,17 @@ class OfflineTrainRunner():
                 if self._rank == 0:
                     logging.info(f"Resuming training from iteration {resume_iteration} ...")
 
+        # load weights to fine tune
+        if self.start_weight is not None:
+            self._agent.load_weights(self.start_weight)
+
         dataset = self._wrapped_buffer.dataset()
         data_iter = iter(dataset)
 
         process = psutil.Process(os.getpid())
         num_cpu = psutil.cpu_count()
 
+        losses = []
         for i in range(start_iter, self._iterations):
             log_iteration = i % self._log_freq == 0 and i > 0
 
@@ -138,6 +145,7 @@ class OfflineTrainRunner():
             batch = {k: v.to(self._train_device) for k, v in sampled_batch.items() if type(v) == torch.Tensor}
             t = time.time()
             loss = self._step(i, batch)
+            losses.append(loss)
             step_time = time.time() - t
 
             if self._rank == 0:
@@ -152,11 +160,11 @@ class OfflineTrainRunner():
                         i, 'monitoring/cpu_percent',
                         process.cpu_percent(interval=None) / num_cpu)
 
-                    logging.info(f"Train Step {i:06d} | Loss: {loss:0.5f} | Sample time: {sample_time:0.6f} | Step time: {step_time:0.4f}.")
-
+                    logging.info(f"Train Step {i:06d} | Loss: {mean(losses):0.5f} | Sample time: {sample_time:0.6f} | Step time: {step_time:0.4f}.")
+                    losses = []
                 self._writer.end_iteration()
 
-                if i % self._save_freq == 0 and self._weightsdir is not None:
+                if i % self._save_freq == 0 and self._weightsdir is not None and i > 0:
                     self._save_model(i)
 
         if self._rank == 0 and self._writer is not None:
