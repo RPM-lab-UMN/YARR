@@ -30,6 +30,7 @@ class OfflineTrainRunner():
     def __init__(self,
                  agent: Agent,
                  wrapped_replay_buffer: PyTorchReplayBuffer,
+                 fine_wrapped_replay_buffer: PyTorchReplayBuffer,
                  train_device: torch.device,
                  stat_accumulator: Union[StatAccumulator, None] = None,
                  iterations: int = int(6e6),
@@ -47,6 +48,7 @@ class OfflineTrainRunner():
                  start_weight: str = None):
         self._agent = agent
         self._wrapped_buffer = wrapped_replay_buffer
+        self._fine_wrapped_buffer = fine_wrapped_replay_buffer
         self._stat_accumulator = stat_accumulator
         self._iterations = iterations
         self._logdir = logdir
@@ -56,7 +58,6 @@ class OfflineTrainRunner():
         self._num_weights_to_keep = num_weights_to_keep
         self._save_freq = save_freq
 
-        self._wrapped_buffer = wrapped_replay_buffer
         self._train_device = train_device
         self._tensorboard_logging = tensorboard_logging
         self._csv_logging = csv_logging
@@ -128,6 +129,13 @@ class OfflineTrainRunner():
         dataset = self._wrapped_buffer.dataset()
         data_iter = iter(dataset)
 
+        if self._fine_wrapped_buffer is not None:
+            fine = True
+            fine_dataset = self._fine_wrapped_buffer.dataset()
+            fine_data_iter = iter(fine_dataset)
+        else:
+            fine = False
+
         process = psutil.Process(os.getpid())
         num_cpu = psutil.cpu_count()
 
@@ -140,9 +148,17 @@ class OfflineTrainRunner():
 
             t = time.time()
             sampled_batch = next(data_iter)
+            if fine:
+                fine_sampled_batch = next(fine_data_iter)
             sample_time = time.time() - t
 
             batch = {k: v.to(self._train_device) for k, v in sampled_batch.items() if type(v) == torch.Tensor}
+            if fine:
+                # add the fine batch to the batch
+                for k, v in fine_sampled_batch.items():
+                    if type(v) == torch.Tensor:
+                        # concatenate the batch
+                        batch[k] = torch.cat((batch[k], v.to(self._train_device)), dim=0)
             t = time.time()
             loss = self._step(i, batch)
             losses.append(loss)
@@ -172,3 +188,5 @@ class OfflineTrainRunner():
             logging.info('Stopping envs ...')
 
             self._wrapped_buffer.replay_buffer.shutdown()
+            if fine:
+                self._fine_wrapped_buffer.replay_buffer.shutdown()
