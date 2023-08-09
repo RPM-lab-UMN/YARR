@@ -234,7 +234,7 @@ class _IndependentEnvRunner(_EnvRunner):
                     except StopIteration as e:
                         continue
                     except Exception as e:
-                        print('transition failed')
+                        print('transition failed:', e)
                         try:
                             env._episodes_this_task -= 1
                         except:
