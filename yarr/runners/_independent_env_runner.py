@@ -56,7 +56,10 @@ class _IndependentEnvRunner(_EnvRunner):
                  env_device: torch.device = None,
                  previous_loaded_weight_folder: str = '',
                  num_eval_runs: int = 1,
+                 desc_indices: list = [0]
                  ):
+        
+            self._desc_indices = desc_indices
 
             super().__init__(train_env, eval_env, agent, timesteps,
                              train_envs, eval_envs, rollout_episodes, eval_episodes,
@@ -193,6 +196,7 @@ class _IndependentEnvRunner(_EnvRunner):
             for ep in range(self._eval_episodes):
                 num_variations = env._task.variation_count()
                 variation = ep % num_variations
+                desc_index = self._desc_indices[ep % len(self._desc_indices)]
 
                 # the current task gets reset after every M episodes
                 episode_rollout = []
@@ -204,7 +208,8 @@ class _IndependentEnvRunner(_EnvRunner):
                             self._step_signal, env, self._agent,
                             self._episode_length, self._timesteps,
                             eval, eval_demo_seed=eval_demo_seed,
-                            record_enabled=rec_cfg.enabled, variation=variation)
+                            record_enabled=rec_cfg.enabled, variation=variation,
+                            desc_index=desc_index)
                     except Exception as e:
                         seed_offset += 1
                         continue

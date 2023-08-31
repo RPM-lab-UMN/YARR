@@ -17,10 +17,11 @@ class RolloutGenerator(object):
     def generator(self, step_signal: Value, env: Env, agent: Agent,
                   episode_length: int, timesteps: int,
                   eval: bool, eval_demo_seed: int = 0,
-                  record_enabled: bool = False, variation: int = 0):
+                  record_enabled: bool = False, variation: int = 0,
+                  desc_index: int = 0):
 
         if eval:
-            obs = env.reset_to_seed(variation, eval_demo_seed)
+            obs = env.reset_to_seed(variation, eval_demo_seed, desc_index=desc_index)
         else:
             obs = env.reset()
 

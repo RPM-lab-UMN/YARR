@@ -40,8 +40,10 @@ class IndependentEnvRunner(EnvRunner):
                  num_eval_runs: int = 1,
                  env_device: torch.device = None,
                  multi_task: bool = False,
-                 classifier = None):
+                 classifier = None,
+                 desc_indices = [0]):
             self._classifier = classifier
+            self._desc_indices = desc_indices
             super().__init__(train_env, agent, train_replay_buffer, num_train_envs, num_eval_envs,
                             rollout_episodes, eval_episodes, training_iterations, eval_from_eps_number,
                             episode_length, eval_env, eval_replay_buffer, stat_accumulator,
@@ -117,7 +119,8 @@ class IndependentEnvRunner(EnvRunner):
             self.current_replay_ratio, self.target_replay_ratio,
             self._weightsdir, self._logdir,
             self._env_device, self._previous_loaded_weight_folder,
-            num_eval_runs=self._num_eval_runs)
+            num_eval_runs=self._num_eval_runs,
+            desc_indices=self._desc_indices)
 
         stat_accumulator = SimpleAccumulator(eval_video_fps=30)
         self._internal_env_runner._run_eval_independent('eval_env',
