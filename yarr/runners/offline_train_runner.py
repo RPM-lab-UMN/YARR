@@ -30,7 +30,8 @@ class OfflineTrainRunner():
     def __init__(self,
                  agent: Agent,
                  wrapped_replay_buffer: PyTorchReplayBuffer,
-                 fine_wrapped_replay_buffer: PyTorchReplayBuffer,
+                 wrapped_replay_buffer2: PyTorchReplayBuffer,
+                 wrapped_replay_buffer3: PyTorchReplayBuffer,
                  train_device: torch.device,
                  stat_accumulator: Union[StatAccumulator, None] = None,
                  iterations: int = int(6e6),
@@ -48,7 +49,8 @@ class OfflineTrainRunner():
                  start_weight: str = None):
         self._agent = agent
         self._wrapped_buffer = wrapped_replay_buffer
-        self._fine_wrapped_buffer = fine_wrapped_replay_buffer
+        self._wrapped_buffer2 = wrapped_replay_buffer2
+        self._wrapped_buffer3 = wrapped_replay_buffer3
         self._stat_accumulator = stat_accumulator
         self._iterations = iterations
         self._logdir = logdir
@@ -129,12 +131,17 @@ class OfflineTrainRunner():
         dataset = self._wrapped_buffer.dataset()
         data_iter = iter(dataset)
 
-        if self._fine_wrapped_buffer is not None:
-            fine = True
-            fine_dataset = self._fine_wrapped_buffer.dataset()
-            fine_data_iter = iter(fine_dataset)
-        else:
-            fine = False
+        fine = 0
+        if self._wrapped_buffer2 is not None:
+            fine = 1
+            dataset2 = self._wrapped_buffer2.dataset()
+            data_iter2 = iter(dataset2)
+        if self._wrapped_buffer3 is not None:
+            fine = 2
+            dataset3 = self._wrapped_buffer3.dataset()
+            data_iter3 = iter(dataset3)
+
+        
 
         process = psutil.Process(os.getpid())
         num_cpu = psutil.cpu_count()
@@ -148,14 +155,22 @@ class OfflineTrainRunner():
 
             t = time.time()
             sampled_batch = next(data_iter)
-            if fine:
-                fine_sampled_batch = next(fine_data_iter)
+            if fine >= 1:
+                sampled_batch2 = next(data_iter2)
+            if fine >= 2:
+                sampled_batch3 = next(data_iter3)
             sample_time = time.time() - t
 
             batch = {k: v.to(self._train_device) for k, v in sampled_batch.items() if type(v) == torch.Tensor}
-            if fine:
+            if fine >= 1:
                 # add the fine batch to the batch
-                for k, v in fine_sampled_batch.items():
+                for k, v in sampled_batch2.items():
+                    if type(v) == torch.Tensor:
+                        # concatenate the batch
+                        batch[k] = torch.cat((batch[k], v.to(self._train_device)), dim=0)
+            if fine >= 2:
+                # add the fine batch to the batch
+                for k, v in sampled_batch3.items():
                     if type(v) == torch.Tensor:
                         # concatenate the batch
                         batch[k] = torch.cat((batch[k], v.to(self._train_device)), dim=0)
